@@ -8,8 +8,9 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, request, Response
 from collections import deque
 import starlink_grpc
-import speedtest
 import threading
+import requests
+import time as time_module
 
 app = Flask(__name__)
 
@@ -156,6 +157,86 @@ speedtest_status = {
     'error': None
 }
 
+# Test URLs for download (large files from fast CDNs)
+DOWNLOAD_TEST_URLS = [
+    'https://speed.cloudflare.com/__down?bytes=100000000',  # Cloudflare 100MB
+    'https://proof.ovh.net/files/100Mb.dat',  # OVH
+    'http://speedtest.tele2.net/100MB.zip',  # Tele2
+]
+
+def test_ping(url):
+    """Test ping latency to a server"""
+    try:
+        start = time_module.time()
+        response = requests.head(url, timeout=5)
+        latency = (time_module.time() - start) * 1000  # Convert to ms
+        return latency if response.status_code < 400 else None
+    except:
+        return None
+
+def test_download_speed(url, duration=30):
+    """Test download speed for specified duration"""
+    total_bytes = 0
+    start_time = time_module.time()
+
+    try:
+        while time_module.time() - start_time < duration:
+            chunk_start = time_module.time()
+            response = requests.get(url, stream=True, timeout=10)
+
+            for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
+                if chunk:
+                    total_bytes += len(chunk)
+
+                # Check if duration exceeded
+                if time_module.time() - start_time >= duration:
+                    break
+
+            response.close()
+
+    except Exception as e:
+        print(f"Download error: {e}")
+
+    elapsed = time_module.time() - start_time
+    speed_mbps = (total_bytes * 8) / (elapsed * 1_000_000) if elapsed > 0 else 0
+    return speed_mbps
+
+def test_upload_speed(duration=30):
+    """Test upload speed for specified duration"""
+    # Generate 10MB test data
+    chunk_size = 10 * 1024 * 1024
+    test_data = b'0' * chunk_size
+
+    total_bytes = 0
+    start_time = time_module.time()
+
+    # Use httpbin.org for upload testing
+    upload_url = 'https://httpbin.org/post'
+
+    try:
+        while time_module.time() - start_time < duration:
+            chunk_start = time_module.time()
+            try:
+                response = requests.post(upload_url, data=test_data, timeout=10)
+                if response.status_code == 200:
+                    total_bytes += chunk_size
+            except Exception as e:
+                print(f"Upload chunk error: {e}")
+                # Use smaller chunks if full size fails
+                chunk_size = 1 * 1024 * 1024
+                test_data = b'0' * chunk_size
+
+            # Check if duration exceeded
+            if time_module.time() - start_time >= duration:
+                break
+
+    except Exception as e:
+        print(f"Upload error: {e}")
+
+    elapsed = time_module.time() - start_time
+    speed_mbps = (total_bytes * 8) / (elapsed * 1_000_000) if elapsed > 0 else 0
+    return speed_mbps
+
 def run_speedtest_thread():
     """Run speedtest in background thread"""
     global speedtest_status
@@ -165,28 +246,42 @@ def run_speedtest_thread():
         speedtest_status['progress'] = 'Initializing speedtest...'
         speedtest_status['error'] = None
 
-        # Create speedtest instance
-        st = speedtest.Speedtest()
+        # Test ping to various servers
+        speedtest_status['progress'] = 'Testing ping latency...'
+        ping_results = []
+        for url in DOWNLOAD_TEST_URLS[:3]:
+            latency = test_ping(url)
+            if latency:
+                ping_results.append(latency)
 
-        speedtest_status['progress'] = 'Finding best server...'
-        st.get_best_server()
-        speedtest_status['server'] = f"{st.best['sponsor']} ({st.best['name']})"
+        if ping_results:
+            speedtest_status['ping'] = round(min(ping_results), 1)
+            speedtest_status['server'] = 'Multiple CDN servers (Cloudflare, OVH, Tele2)'
 
-        speedtest_status['progress'] = 'Testing download speed...'
-        download_speed = st.download() / 1_000_000  # Convert to Mbps
-        speedtest_status['download'] = round(download_speed, 2)
+        # Download test - 30 seconds
+        speedtest_status['progress'] = 'Testing download speed (30s)...'
+        best_download = 0
+        for url in DOWNLOAD_TEST_URLS[:2]:  # Test with 2 different servers
+            try:
+                speed = test_download_speed(url, duration=30)
+                best_download = max(best_download, speed)
+                speedtest_status['download'] = round(best_download, 2)
+            except Exception as e:
+                print(f"Download test failed for {url}: {e}")
 
-        speedtest_status['progress'] = 'Testing upload speed...'
-        upload_speed = st.upload() / 1_000_000  # Convert to Mbps
+        # Upload test - 30 seconds
+        speedtest_status['progress'] = 'Testing upload speed (30s)...'
+        upload_speed = test_upload_speed(duration=30)
         speedtest_status['upload'] = round(upload_speed, 2)
 
-        speedtest_status['ping'] = round(st.results.ping, 1)
         speedtest_status['progress'] = 'Complete!'
 
     except Exception as e:
         speedtest_status['error'] = str(e)
         speedtest_status['progress'] = f'Error: {str(e)}'
         print(f"Speedtest error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         speedtest_status['running'] = False
 

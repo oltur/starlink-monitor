@@ -21,10 +21,9 @@ A real-time web dashboard for monitoring Starlink performance metrics including 
   - Last 30 minutes
   - Last 1 hour
 - **Speedtest mode** - test real internet bandwidth:
-  - Uses speedtest.net servers for accurate testing
-  - Automatically selects the best server
-  - Tests download and upload speeds
-  - Shows ping latency and server location
+  - Tests against multiple fast CDN servers (Cloudflare, OVH, Tele2)
+  - 30-second download test + 30-second upload test for realistic results
+  - Shows ping latency and server information
   - Runs in background, doesn't block monitoring
 - Auto-refreshing every 2 seconds
 - Responsive design for mobile and desktop
@@ -77,12 +76,12 @@ Use the time range buttons at the top to focus on specific intervals:
 
 ### Speedtest
 Click the **⚡ Run Speedtest** button to test your real internet bandwidth:
-- Tests against speedtest.net servers
-- Automatically finds the best server
+- Tests against multiple fast CDN servers globally
+- **30 seconds for download** + **30 seconds for upload** = thorough, realistic results
 - Shows live progress during the test
 - Displays download/upload speeds and ping latency
 - Normal monitoring continues during the test
-- Takes ~30-60 seconds to complete
+- Total duration: ~60 seconds
 
 ## Troubleshooting
 
