@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Starlink Metrics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: white;
+            margin-bottom: 20px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .time-controls {
+            background: white;
+            border-radius: 10px;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .time-controls label {
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .time-controls button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        .time-controls button:hover {
+            background: #5568d3;
+        }
+
+        .time-controls button.active {
+            background: #764ba2;
+        }
+
+        .status-bar {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 20px;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-unit {
+            font-size: 0.7em;
+            color: #999;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .chart-container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .chart-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #333;
+            text-align: center;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 280px;
+        }
+
+        .obstructed {
+            color: #ff6b6b;
+        }
+
+        .clear {
+            color: #51cf66;
+        }
+
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .status-bar {
+                grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Starlink Mini Dashboard</h1>
+
+        <div class="time-controls">
+            <button onclick="setTimeRange('all')" class="active" id="btn-all">All Data</button>
+            <button onclick="setTimeRange('5m')" id="btn-5m">Last 5 Min</button>
+            <button onclick="setTimeRange('15m')" id="btn-15m">Last 15 Min</button>
+            <button onclick="setTimeRange('30m')" id="btn-30m">Last 30 Min</button>
+            <button onclick="setTimeRange('1h')" id="btn-1h">Last 1 Hour</button>
+        </div>
+
+        <div class="status-bar" id="statusBar">
+            <div class="stat">
+                <div class="stat-label">Download</div>
+                <div class="stat-value" id="currentDownload">--</div>
+                <div class="stat-unit">Mbps</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Upload</div>
+                <div class="stat-value" id="currentUpload">--</div>
+                <div class="stat-unit">Mbps</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Latency</div>
+                <div class="stat-value" id="currentLatency">--</div>
+                <div class="stat-unit">ms</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Packet Loss</div>
+                <div class="stat-value" id="currentPacketLoss">--</div>
+                <div class="stat-unit">%</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Obstruction</div>
+                <div class="stat-value" id="currentObstruction">--</div>
+                <div class="stat-unit">%</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">GPS Sats</div>
+                <div class="stat-value" id="currentGPS">--</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Azimuth</div>
+                <div class="stat-value" id="currentAzimuth">--</div>
+                <div class="stat-unit">°</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Elevation</div>
+                <div class="stat-value" id="currentElevation">--</div>
+                <div class="stat-unit">°</div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-container">
+                <div class="chart-title">Download Speed (Mbps)</div>
+                <div class="chart-wrapper">
+                    <canvas id="downloadChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Upload Speed (Mbps)</div>
+                <div class="chart-wrapper">
+                    <canvas id="uploadChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Latency (ms)</div>
+                <div class="chart-wrapper">
+                    <canvas id="latencyChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Packet Loss (%)</div>
+                <div class="chart-wrapper">
+                    <canvas id="packetLossChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Obstruction Over Time (%)</div>
+                <div class="chart-wrapper">
+                    <canvas id="obstructionChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">GPS Satellites</div>
+                <div class="chart-wrapper">
+                    <canvas id="gpsChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Dish Azimuth (°)</div>
+                <div class="chart-wrapper">
+                    <canvas id="azimuthChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Dish Elevation (°)</div>
+                <div class="chart-wrapper">
+                    <canvas id="elevationChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allData = {};
+        let currentTimeRange = 'all';
+
+        const chartConfig = {
+            type: 'line',
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: {
+                    duration: 300
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        grid: {
+                            display: false
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    }
+                }
+            }
+        };
+
+        const charts = {
+            download: new Chart(document.getElementById('downloadChart'), {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        borderColor: '#51cf66',
+                        backgroundColor: 'rgba(81, 207, 102, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                }
+            }),
+            upload: new Chart(document.getElementById('uploadChart'), {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        borderColor: '#339af0',
+                        backgroundColor: 'rgba(51, 154, 240, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                }
+            }),
+            latency: new Chart(document.getElementById('latencyChart'), {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        borderColor: '#ff6b6b',
+                        backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                }
+            }),
+            packetLoss: new Chart(document.getElementById('packetLossChart'), {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        borderColor: '#ff922b',
+                        backgroundColor: 'rgba(255, 146, 43, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                }
+            }),
+            obstruction: new Chart(document.getElementById('obstructionChart'), {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        borderColor: '#f59f00',
+                        backgroundColor: 'rgba(245, 159, 0, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                }
+            }),
+            gps: new Chart(document.getElementById('gpsChart'), {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        borderColor: '#20c997',
+                        backgroundColor: 'rgba(32, 201, 151, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                }
+            }),
+            azimuth: new Chart(document.getElementById('azimuthChart'), {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        borderColor: '#845ef7',
+                        backgroundColor: 'rgba(132, 94, 247, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                }
+            }),
+            elevation: new Chart(document.getElementById('elevationChart'), {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        borderColor: '#e64980',
+                        backgroundColor: 'rgba(230, 73, 128, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                }
+            })
+        };
+
+        function filterDataByTimeRange(data, range) {
+            if (range === 'all') return data;
+
+            const now = new Date();
+            const ranges = {
+                '5m': 5 * 60,
+                '15m': 15 * 60,
+                '30m': 30 * 60,
+                '1h': 60 * 60
+            };
+
+            const seconds = ranges[range];
+            const sampleInterval = 2; // Data sampled every 2 seconds
+            const samplesToKeep = Math.floor(seconds / sampleInterval);
+
+            const result = {};
+            for (const key in data) {
+                if (Array.isArray(data[key])) {
+                    result[key] = data[key].slice(-samplesToKeep);
+                }
+            }
+            return result;
+        }
+
+        function setTimeRange(range) {
+            currentTimeRange = range;
+
+            // Update button states
+            document.querySelectorAll('.time-controls button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`btn-${range}`).classList.add('active');
+
+            // Re-render with filtered data
+            if (allData.timestamps) {
+                updateCharts(allData);
+            }
+        }
+
+        function updateCharts(data) {
+            allData = data;
+            const filteredData = filterDataByTimeRange(data, currentTimeRange);
+
+            const chartDataMap = {
+                download: filteredData.download_speed,
+                upload: filteredData.upload_speed,
+                latency: filteredData.latency,
+                packetLoss: filteredData.ping_drop_rate,
+                obstruction: filteredData.fraction_obstructed,
+                gps: filteredData.gps_sats,
+                azimuth: filteredData.azimuth,
+                elevation: filteredData.elevation
+            };
+
+            for (const [chartName, chartData] of Object.entries(chartDataMap)) {
+                charts[chartName].data.labels = filteredData.timestamps;
+                charts[chartName].data.datasets[0].data = chartData;
+                charts[chartName].update('none');
+            }
+
+            // Update current values
+            if (data.download_speed && data.download_speed.length > 0) {
+                const latest = data.download_speed.length - 1;
+                document.getElementById('currentDownload').textContent = data.download_speed[latest].toFixed(2);
+                document.getElementById('currentUpload').textContent = data.upload_speed[latest].toFixed(2);
+                document.getElementById('currentLatency').textContent = data.latency[latest].toFixed(1);
+                document.getElementById('currentPacketLoss').textContent = data.ping_drop_rate[latest].toFixed(2);
+                document.getElementById('currentObstruction').textContent = data.fraction_obstructed[latest].toFixed(1);
+                document.getElementById('currentGPS').textContent = Math.round(data.gps_sats[latest]);
+                document.getElementById('currentAzimuth').textContent = data.azimuth[latest].toFixed(1);
+                document.getElementById('currentElevation').textContent = data.elevation[latest].toFixed(1);
+            }
+        }
+
+        async function fetchMetrics() {
+            try {
+                const response = await fetch('/api/metrics');
+                const data = await response.json();
+                updateCharts(data);
+            } catch (error) {
+                console.error('Error fetching metrics:', error);
+            }
+        }
+
+        fetchMetrics();
+        setInterval(fetchMetrics, 2000);
+    </script>
+</body>
+</html>
