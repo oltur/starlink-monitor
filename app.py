@@ -5,9 +5,11 @@ A Flask web server that displays real-time Starlink metrics
 """
 
 from datetime import datetime
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request, Response
 from collections import deque
 import starlink_grpc
+import os
+import time
 
 app = Flask(__name__)
 
@@ -143,6 +145,37 @@ def api_status():
     """API endpoint to get current status"""
     data = get_starlink_status()
     return jsonify(data)
+
+@app.route('/api/speedtest/download')
+def speedtest_download():
+    """Generate random data for download speed test"""
+    # Generate 10MB of random data in chunks
+    chunk_size = 1024 * 1024  # 1MB chunks
+    total_size = 10 * 1024 * 1024  # 10MB total
+
+    def generate():
+        sent = 0
+        while sent < total_size:
+            chunk = os.urandom(min(chunk_size, total_size - sent))
+            yield chunk
+            sent += len(chunk)
+
+    return Response(generate(), mimetype='application/octet-stream')
+
+@app.route('/api/speedtest/upload', methods=['POST'])
+def speedtest_upload():
+    """Receive data for upload speed test"""
+    # Just receive and discard the data
+    total_received = 0
+    chunk_size = 8192
+
+    while True:
+        chunk = request.stream.read(chunk_size)
+        if not chunk:
+            break
+        total_received += len(chunk)
+
+    return jsonify({'received': total_received})
 
 if __name__ == '__main__':
     print("Starting Starlink Metrics Dashboard...")

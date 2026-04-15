@@ -20,6 +20,11 @@ A real-time web dashboard for monitoring Starlink performance metrics including 
   - Last 15 minutes
   - Last 30 minutes
   - Last 1 hour
+- **Speedtest mode** - test maximum bandwidth capacity:
+  - Generates maximum download and upload traffic
+  - Uses 4 parallel connections for accurate testing
+  - 10-second test duration for each direction
+  - Displays max achieved speeds
 - Auto-refreshing every 2 seconds
 - Responsive design for mobile and desktop
 - Optimized for Starlink Mini
@@ -57,6 +62,24 @@ python app.py
 ```
 http://localhost:5001
 ```
+
+## Usage
+
+### Real-time Monitoring
+The dashboard automatically updates every 2 seconds showing current metrics from your Starlink dish.
+
+### Time Range Selection
+Use the time range buttons at the top to focus on specific intervals:
+- **All Data**: Shows all collected data (up to 500 points)
+- **Last 5/15/30 Min**: Zoom into recent data
+- **Last 1 Hour**: View the past hour
+
+### Speedtest
+Click the **⚡ Run Speedtest** button to test your maximum bandwidth:
+- The test runs for ~20 seconds (10 seconds download + 10 seconds upload)
+- Uses 4 parallel connections to saturate your connection
+- Shows maximum achieved speeds (not averages)
+- Normal monitoring continues during the test
 
 ## Troubleshooting
 

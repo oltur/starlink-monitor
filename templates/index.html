@@ -70,6 +70,76 @@
             background: #764ba2;
         }
 
+        .speedtest-btn {
+            background: #20c997 !important;
+            margin-left: 20px;
+        }
+
+        .speedtest-btn:hover {
+            background: #12b886 !important;
+        }
+
+        .speedtest-btn.running {
+            background: #ff6b6b !important;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .speedtest-results {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .speedtest-results.show {
+            display: block;
+        }
+
+        .speedtest-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 15px;
+        }
+
+        .speedtest-metric {
+            text-align: center;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            color: white;
+        }
+
+        .speedtest-metric-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+
+        .speedtest-metric-value {
+            font-size: 2.2em;
+            font-weight: bold;
+        }
+
+        .speedtest-metric-unit {
+            font-size: 0.8em;
+            opacity: 0.9;
+        }
+
+        .speedtest-progress {
+            margin-top: 10px;
+            text-align: center;
+            color: #667eea;
+            font-weight: 600;
+        }
+
         .status-bar {
             background: white;
             border-radius: 10px;
@@ -162,6 +232,29 @@
             <button onclick="setTimeRange('15m')" id="btn-15m">Last 15 Min</button>
             <button onclick="setTimeRange('30m')" id="btn-30m">Last 30 Min</button>
             <button onclick="setTimeRange('1h')" id="btn-1h">Last 1 Hour</button>
+            <button onclick="runSpeedtest()" class="speedtest-btn" id="speedtest-btn">⚡ Run Speedtest</button>
+        </div>
+
+        <div class="speedtest-results" id="speedtest-results">
+            <h2 style="text-align: center; color: #667eea; margin-bottom: 10px;">Speedtest Results</h2>
+            <div class="speedtest-progress" id="speedtest-progress"></div>
+            <div class="speedtest-grid">
+                <div class="speedtest-metric">
+                    <div class="speedtest-metric-label">Max Download</div>
+                    <div class="speedtest-metric-value" id="speedtest-download">--</div>
+                    <div class="speedtest-metric-unit">Mbps</div>
+                </div>
+                <div class="speedtest-metric">
+                    <div class="speedtest-metric-label">Max Upload</div>
+                    <div class="speedtest-metric-value" id="speedtest-upload">--</div>
+                    <div class="speedtest-metric-unit">Mbps</div>
+                </div>
+                <div class="speedtest-metric">
+                    <div class="speedtest-metric-label">Test Duration</div>
+                    <div class="speedtest-metric-value" id="speedtest-duration">--</div>
+                    <div class="speedtest-metric-unit">seconds</div>
+                </div>
+            </div>
         </div>
 
         <div class="status-bar" id="statusBar">
@@ -500,6 +593,141 @@
 
         fetchMetrics();
         setInterval(fetchMetrics, 2000);
+
+        // Speedtest functionality
+        let speedtestRunning = false;
+
+        async function runSpeedtest() {
+            if (speedtestRunning) {
+                return;
+            }
+
+            speedtestRunning = true;
+            const btn = document.getElementById('speedtest-btn');
+            const results = document.getElementById('speedtest-results');
+            const progress = document.getElementById('speedtest-progress');
+
+            btn.classList.add('running');
+            btn.textContent = '⏳ Testing...';
+            results.classList.add('show');
+
+            try {
+                const startTime = Date.now();
+
+                // Download test
+                progress.textContent = 'Running download test...';
+                document.getElementById('speedtest-download').textContent = '...';
+                const downloadSpeed = await testDownload();
+                document.getElementById('speedtest-download').textContent = downloadSpeed.toFixed(2);
+
+                // Upload test
+                progress.textContent = 'Running upload test...';
+                document.getElementById('speedtest-upload').textContent = '...';
+                const uploadSpeed = await testUpload();
+                document.getElementById('speedtest-upload').textContent = uploadSpeed.toFixed(2);
+
+                const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+                document.getElementById('speedtest-duration').textContent = duration;
+                progress.textContent = '✓ Test complete!';
+
+            } catch (error) {
+                console.error('Speedtest error:', error);
+                progress.textContent = '✗ Test failed: ' + error.message;
+            } finally {
+                speedtestRunning = false;
+                btn.classList.remove('running');
+                btn.textContent = '⚡ Run Speedtest';
+            }
+        }
+
+        async function testDownload() {
+            const testDuration = 10000; // 10 seconds
+            const connections = 4; // Parallel connections
+            const startTime = Date.now();
+            let totalBytes = 0;
+            let maxSpeed = 0;
+
+            const tests = [];
+            for (let i = 0; i < connections; i++) {
+                tests.push(
+                    (async () => {
+                        while (Date.now() - startTime < testDuration) {
+                            try {
+                                const chunkStart = Date.now();
+                                const response = await fetch('/api/speedtest/download');
+                                const data = await response.blob();
+                                const chunkTime = (Date.now() - chunkStart) / 1000;
+                                const chunkBytes = data.size;
+                                totalBytes += chunkBytes;
+
+                                // Calculate instantaneous speed in Mbps
+                                const speed = (chunkBytes * 8) / (chunkTime * 1_000_000);
+                                maxSpeed = Math.max(maxSpeed, speed);
+                            } catch (e) {
+                                console.error('Download chunk error:', e);
+                            }
+                        }
+                    })()
+                );
+            }
+
+            await Promise.all(tests);
+
+            const totalTime = (Date.now() - startTime) / 1000;
+            const avgSpeed = (totalBytes * 8) / (totalTime * 1_000_000);
+
+            return Math.max(avgSpeed, maxSpeed);
+        }
+
+        async function testUpload() {
+            const testDuration = 10000; // 10 seconds
+            const connections = 4; // Parallel connections
+            const chunkSize = 1024 * 1024; // 1MB chunks
+            const startTime = Date.now();
+            let totalBytes = 0;
+            let maxSpeed = 0;
+
+            // Pre-generate data to upload
+            const uploadData = new Uint8Array(chunkSize);
+            for (let i = 0; i < uploadData.length; i++) {
+                uploadData[i] = Math.floor(Math.random() * 256);
+            }
+
+            const tests = [];
+            for (let i = 0; i < connections; i++) {
+                tests.push(
+                    (async () => {
+                        while (Date.now() - startTime < testDuration) {
+                            try {
+                                const chunkStart = Date.now();
+                                await fetch('/api/speedtest/upload', {
+                                    method: 'POST',
+                                    body: uploadData,
+                                    headers: {
+                                        'Content-Type': 'application/octet-stream'
+                                    }
+                                });
+                                const chunkTime = (Date.now() - chunkStart) / 1000;
+                                totalBytes += chunkSize;
+
+                                // Calculate instantaneous speed in Mbps
+                                const speed = (chunkSize * 8) / (chunkTime * 1_000_000);
+                                maxSpeed = Math.max(maxSpeed, speed);
+                            } catch (e) {
+                                console.error('Upload chunk error:', e);
+                            }
+                        }
+                    })()
+                );
+            }
+
+            await Promise.all(tests);
+
+            const totalTime = (Date.now() - startTime) / 1000;
+            const avgSpeed = (totalBytes * 8) / (totalTime * 1_000_000);
+
+            return Math.max(avgSpeed, maxSpeed);
+        }
     </script>
 </body>
 </html>
