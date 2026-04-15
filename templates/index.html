@@ -238,21 +238,22 @@
         <div class="speedtest-results" id="speedtest-results">
             <h2 style="text-align: center; color: #667eea; margin-bottom: 10px;">Speedtest Results</h2>
             <div class="speedtest-progress" id="speedtest-progress"></div>
+            <div style="text-align: center; margin: 10px 0; color: #666; font-size: 0.9em;" id="speedtest-server"></div>
             <div class="speedtest-grid">
                 <div class="speedtest-metric">
-                    <div class="speedtest-metric-label">Max Download</div>
+                    <div class="speedtest-metric-label">Download</div>
                     <div class="speedtest-metric-value" id="speedtest-download">--</div>
                     <div class="speedtest-metric-unit">Mbps</div>
                 </div>
                 <div class="speedtest-metric">
-                    <div class="speedtest-metric-label">Max Upload</div>
+                    <div class="speedtest-metric-label">Upload</div>
                     <div class="speedtest-metric-value" id="speedtest-upload">--</div>
                     <div class="speedtest-metric-unit">Mbps</div>
                 </div>
                 <div class="speedtest-metric">
-                    <div class="speedtest-metric-label">Test Duration</div>
-                    <div class="speedtest-metric-value" id="speedtest-duration">--</div>
-                    <div class="speedtest-metric-unit">seconds</div>
+                    <div class="speedtest-metric-label">Ping</div>
+                    <div class="speedtest-metric-value" id="speedtest-ping">--</div>
+                    <div class="speedtest-metric-unit">ms</div>
                 </div>
             </div>
         </div>
@@ -596,6 +597,7 @@
 
         // Speedtest functionality
         let speedtestRunning = false;
+        let speedtestPollInterval = null;
 
         async function runSpeedtest() {
             if (speedtestRunning) {
@@ -611,122 +613,70 @@
             btn.textContent = '⏳ Testing...';
             results.classList.add('show');
 
+            // Reset display
+            document.getElementById('speedtest-download').textContent = '...';
+            document.getElementById('speedtest-upload').textContent = '...';
+            document.getElementById('speedtest-ping').textContent = '...';
+            document.getElementById('speedtest-server').textContent = '';
+
             try {
-                const startTime = Date.now();
+                // Start the speedtest
+                const startResponse = await fetch('/api/speedtest/start', {
+                    method: 'POST'
+                });
 
-                // Download test
-                progress.textContent = 'Running download test...';
-                document.getElementById('speedtest-download').textContent = '...';
-                const downloadSpeed = await testDownload();
-                document.getElementById('speedtest-download').textContent = downloadSpeed.toFixed(2);
+                if (!startResponse.ok) {
+                    throw new Error('Failed to start speedtest');
+                }
 
-                // Upload test
-                progress.textContent = 'Running upload test...';
-                document.getElementById('speedtest-upload').textContent = '...';
-                const uploadSpeed = await testUpload();
-                document.getElementById('speedtest-upload').textContent = uploadSpeed.toFixed(2);
+                // Poll for status updates
+                speedtestPollInterval = setInterval(async () => {
+                    try {
+                        const statusResponse = await fetch('/api/speedtest/status');
+                        const status = await statusResponse.json();
 
-                const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-                document.getElementById('speedtest-duration').textContent = duration;
-                progress.textContent = '✓ Test complete!';
+                        // Update progress
+                        progress.textContent = status.progress;
+
+                        // Update results as they come in
+                        if (status.server) {
+                            document.getElementById('speedtest-server').textContent = `Server: ${status.server}`;
+                        }
+                        if (status.download > 0) {
+                            document.getElementById('speedtest-download').textContent = status.download.toFixed(2);
+                        }
+                        if (status.upload > 0) {
+                            document.getElementById('speedtest-upload').textContent = status.upload.toFixed(2);
+                        }
+                        if (status.ping > 0) {
+                            document.getElementById('speedtest-ping').textContent = status.ping.toFixed(1);
+                        }
+
+                        // Check if complete
+                        if (!status.running) {
+                            clearInterval(speedtestPollInterval);
+                            speedtestRunning = false;
+                            btn.classList.remove('running');
+                            btn.textContent = '⚡ Run Speedtest';
+
+                            if (status.error) {
+                                progress.textContent = `✗ Error: ${status.error}`;
+                            } else {
+                                progress.textContent = '✓ Test complete!';
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Error polling speedtest status:', error);
+                    }
+                }, 500); // Poll every 500ms
 
             } catch (error) {
                 console.error('Speedtest error:', error);
                 progress.textContent = '✗ Test failed: ' + error.message;
-            } finally {
                 speedtestRunning = false;
                 btn.classList.remove('running');
                 btn.textContent = '⚡ Run Speedtest';
             }
-        }
-
-        async function testDownload() {
-            const testDuration = 10000; // 10 seconds
-            const connections = 4; // Parallel connections
-            const startTime = Date.now();
-            let totalBytes = 0;
-            let maxSpeed = 0;
-
-            const tests = [];
-            for (let i = 0; i < connections; i++) {
-                tests.push(
-                    (async () => {
-                        while (Date.now() - startTime < testDuration) {
-                            try {
-                                const chunkStart = Date.now();
-                                const response = await fetch('/api/speedtest/download');
-                                const data = await response.blob();
-                                const chunkTime = (Date.now() - chunkStart) / 1000;
-                                const chunkBytes = data.size;
-                                totalBytes += chunkBytes;
-
-                                // Calculate instantaneous speed in Mbps
-                                const speed = (chunkBytes * 8) / (chunkTime * 1_000_000);
-                                maxSpeed = Math.max(maxSpeed, speed);
-                            } catch (e) {
-                                console.error('Download chunk error:', e);
-                            }
-                        }
-                    })()
-                );
-            }
-
-            await Promise.all(tests);
-
-            const totalTime = (Date.now() - startTime) / 1000;
-            const avgSpeed = (totalBytes * 8) / (totalTime * 1_000_000);
-
-            return Math.max(avgSpeed, maxSpeed);
-        }
-
-        async function testUpload() {
-            const testDuration = 10000; // 10 seconds
-            const connections = 4; // Parallel connections
-            const chunkSize = 1024 * 1024; // 1MB chunks
-            const startTime = Date.now();
-            let totalBytes = 0;
-            let maxSpeed = 0;
-
-            // Pre-generate data to upload
-            const uploadData = new Uint8Array(chunkSize);
-            for (let i = 0; i < uploadData.length; i++) {
-                uploadData[i] = Math.floor(Math.random() * 256);
-            }
-
-            const tests = [];
-            for (let i = 0; i < connections; i++) {
-                tests.push(
-                    (async () => {
-                        while (Date.now() - startTime < testDuration) {
-                            try {
-                                const chunkStart = Date.now();
-                                await fetch('/api/speedtest/upload', {
-                                    method: 'POST',
-                                    body: uploadData,
-                                    headers: {
-                                        'Content-Type': 'application/octet-stream'
-                                    }
-                                });
-                                const chunkTime = (Date.now() - chunkStart) / 1000;
-                                totalBytes += chunkSize;
-
-                                // Calculate instantaneous speed in Mbps
-                                const speed = (chunkSize * 8) / (chunkTime * 1_000_000);
-                                maxSpeed = Math.max(maxSpeed, speed);
-                            } catch (e) {
-                                console.error('Upload chunk error:', e);
-                            }
-                        }
-                    })()
-                );
-            }
-
-            await Promise.all(tests);
-
-            const totalTime = (Date.now() - startTime) / 1000;
-            const avgSpeed = (totalBytes * 8) / (totalTime * 1_000_000);
-
-            return Math.max(avgSpeed, maxSpeed);
         }
     </script>
 </body>

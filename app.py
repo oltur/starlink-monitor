@@ -8,8 +8,8 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, request, Response
 from collections import deque
 import starlink_grpc
-import os
-import time
+import speedtest
+import threading
 
 app = Flask(__name__)
 
@@ -146,36 +146,80 @@ def api_status():
     data = get_starlink_status()
     return jsonify(data)
 
-@app.route('/api/speedtest/download')
-def speedtest_download():
-    """Generate random data for download speed test"""
-    # Generate 10MB of random data in chunks
-    chunk_size = 1024 * 1024  # 1MB chunks
-    total_size = 10 * 1024 * 1024  # 10MB total
+speedtest_status = {
+    'running': False,
+    'progress': '',
+    'download': 0,
+    'upload': 0,
+    'ping': 0,
+    'server': '',
+    'error': None
+}
 
-    def generate():
-        sent = 0
-        while sent < total_size:
-            chunk = os.urandom(min(chunk_size, total_size - sent))
-            yield chunk
-            sent += len(chunk)
+def run_speedtest_thread():
+    """Run speedtest in background thread"""
+    global speedtest_status
 
-    return Response(generate(), mimetype='application/octet-stream')
+    try:
+        speedtest_status['running'] = True
+        speedtest_status['progress'] = 'Initializing speedtest...'
+        speedtest_status['error'] = None
 
-@app.route('/api/speedtest/upload', methods=['POST'])
-def speedtest_upload():
-    """Receive data for upload speed test"""
-    # Just receive and discard the data
-    total_received = 0
-    chunk_size = 8192
+        # Create speedtest instance
+        st = speedtest.Speedtest()
 
-    while True:
-        chunk = request.stream.read(chunk_size)
-        if not chunk:
-            break
-        total_received += len(chunk)
+        speedtest_status['progress'] = 'Finding best server...'
+        st.get_best_server()
+        speedtest_status['server'] = f"{st.best['sponsor']} ({st.best['name']})"
 
-    return jsonify({'received': total_received})
+        speedtest_status['progress'] = 'Testing download speed...'
+        download_speed = st.download() / 1_000_000  # Convert to Mbps
+        speedtest_status['download'] = round(download_speed, 2)
+
+        speedtest_status['progress'] = 'Testing upload speed...'
+        upload_speed = st.upload() / 1_000_000  # Convert to Mbps
+        speedtest_status['upload'] = round(upload_speed, 2)
+
+        speedtest_status['ping'] = round(st.results.ping, 1)
+        speedtest_status['progress'] = 'Complete!'
+
+    except Exception as e:
+        speedtest_status['error'] = str(e)
+        speedtest_status['progress'] = f'Error: {str(e)}'
+        print(f"Speedtest error: {e}")
+    finally:
+        speedtest_status['running'] = False
+
+@app.route('/api/speedtest/start', methods=['POST'])
+def start_speedtest():
+    """Start a speedtest in background"""
+    global speedtest_status
+
+    if speedtest_status['running']:
+        return jsonify({'error': 'Speedtest already running'}), 400
+
+    # Reset status
+    speedtest_status = {
+        'running': True,
+        'progress': 'Starting...',
+        'download': 0,
+        'upload': 0,
+        'ping': 0,
+        'server': '',
+        'error': None
+    }
+
+    # Run in background thread
+    thread = threading.Thread(target=run_speedtest_thread)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({'status': 'started'})
+
+@app.route('/api/speedtest/status')
+def get_speedtest_status():
+    """Get current speedtest status"""
+    return jsonify(speedtest_status)
 
 if __name__ == '__main__':
     print("Starting Starlink Metrics Dashboard...")
