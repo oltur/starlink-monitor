@@ -157,84 +157,140 @@ speedtest_status = {
     'error': None
 }
 
-# Test URLs for download (large files from fast CDNs)
+# Test URLs - using public speedtest files that allow automated testing
 DOWNLOAD_TEST_URLS = [
-    'https://speed.cloudflare.com/__down?bytes=100000000',  # Cloudflare 100MB
-    'https://proof.ovh.net/files/100Mb.dat',  # OVH
-    'http://speedtest.tele2.net/100MB.zip',  # Tele2
+    'http://speedtest.tele2.net/1GB.zip',  # Tele2 1GB file
+    'https://proof.ovh.net/files/1Gio.dat',  # OVH 1GB file
+    'http://ipv4.download.thinkbroadband.com/1GB.zip',  # ThinkBroadband
 ]
+
+UPLOAD_TEST_URL = 'https://httpbin.org/post'  # Simple upload endpoint
 
 def test_ping(url):
     """Test ping latency to a server"""
     try:
         start = time_module.time()
-        response = requests.head(url, timeout=5)
+        response = requests.head(url, timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
         latency = (time_module.time() - start) * 1000  # Convert to ms
         return latency if response.status_code < 400 else None
     except:
         return None
 
-def test_download_speed(url, duration=30):
-    """Test download speed for specified duration"""
+def download_worker(url, duration, results_dict, worker_id):
+    """Worker thread for parallel download testing"""
     total_bytes = 0
     start_time = time_module.time()
 
-    try:
-        while time_module.time() - start_time < duration:
-            chunk_start = time_module.time()
-            response = requests.get(url, stream=True, timeout=10)
-
-            for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
-                if chunk:
-                    total_bytes += len(chunk)
-
-                # Check if duration exceeded
-                if time_module.time() - start_time >= duration:
-                    break
-
-            response.close()
-
-    except Exception as e:
-        print(f"Download error: {e}")
-
-    elapsed = time_module.time() - start_time
-    speed_mbps = (total_bytes * 8) / (elapsed * 1_000_000) if elapsed > 0 else 0
-    return speed_mbps
-
-def test_upload_speed(duration=30):
-    """Test upload speed for specified duration"""
-    # Generate 10MB test data
-    chunk_size = 10 * 1024 * 1024
-    test_data = b'0' * chunk_size
-
-    total_bytes = 0
-    start_time = time_module.time()
-
-    # Use httpbin.org for upload testing
-    upload_url = 'https://httpbin.org/post'
+    # Add headers to look like a real browser
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': '*/*',
+    }
 
     try:
-        while time_module.time() - start_time < duration:
-            chunk_start = time_module.time()
-            try:
-                response = requests.post(upload_url, data=test_data, timeout=10)
-                if response.status_code == 200:
-                    total_bytes += chunk_size
-            except Exception as e:
-                print(f"Upload chunk error: {e}")
-                # Use smaller chunks if full size fails
-                chunk_size = 1 * 1024 * 1024
-                test_data = b'0' * chunk_size
+        print(f"Download worker {worker_id} starting with URL: {url[:50]}...")
+        response = requests.get(url, stream=True, timeout=15, headers=headers)
+        print(f"Download worker {worker_id} connected, status: {response.status_code}")
+
+        if response.status_code >= 400:
+            print(f"Download worker {worker_id} got error status, aborting")
+            results_dict[worker_id] = 0
+            return
+
+        for chunk in response.iter_content(chunk_size=256 * 1024):  # 256KB chunks for better performance
+            if chunk:
+                total_bytes += len(chunk)
 
             # Check if duration exceeded
             if time_module.time() - start_time >= duration:
                 break
 
+        response.close()
+        print(f"Download worker {worker_id} finished: {total_bytes / (1024*1024):.2f} MB")
     except Exception as e:
-        print(f"Upload error: {e}")
+        print(f"Download worker {worker_id} error: {e}")
+
+    results_dict[worker_id] = total_bytes
+
+def test_download_speed(url, duration=30, num_connections=8):
+    """Test download speed with multiple parallel connections"""
+    import concurrent.futures
+
+    results = {}
+    start_time = time_module.time()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_connections) as executor:
+        futures = []
+        for i in range(num_connections):
+            future = executor.submit(download_worker, url, duration, results, i)
+            futures.append(future)
+
+        # Wait for all to complete
+        concurrent.futures.wait(futures)
 
     elapsed = time_module.time() - start_time
+    total_bytes = sum(results.values())
     speed_mbps = (total_bytes * 8) / (elapsed * 1_000_000) if elapsed > 0 else 0
+
+    print(f"Download test: {total_bytes / (1024*1024):.2f} MB in {elapsed:.2f}s = {speed_mbps:.2f} Mbps")
+    return speed_mbps
+
+def upload_worker(url, duration, chunk_size, results_dict, worker_id):
+    """Worker thread for parallel upload testing"""
+    total_bytes = 0
+    start_time = time_module.time()
+    uploads_count = 0
+
+    # Generate test data once
+    test_data = b'X' * chunk_size
+
+    try:
+        print(f"Upload worker {worker_id} starting...")
+        while time_module.time() - start_time < duration:
+            try:
+                response = requests.post(url, data=test_data, timeout=10,
+                                        headers={'User-Agent': 'Mozilla/5.0'})
+                if response.status_code < 400:
+                    total_bytes += chunk_size
+                    uploads_count += 1
+                else:
+                    print(f"Upload worker {worker_id} got status {response.status_code}")
+            except Exception as e:
+                print(f"Upload worker {worker_id} chunk error: {e}")
+                # Don't break, try to continue
+
+            # Check if duration exceeded
+            if time_module.time() - start_time >= duration:
+                break
+
+        print(f"Upload worker {worker_id} finished: {total_bytes / (1024*1024):.2f} MB in {uploads_count} chunks")
+    except Exception as e:
+        print(f"Upload worker {worker_id} error: {e}")
+
+    results_dict[worker_id] = total_bytes
+
+def test_upload_speed(duration=30, num_connections=4):
+    """Test upload speed with multiple parallel connections"""
+    import concurrent.futures
+
+    chunk_size = 1 * 1024 * 1024  # 1MB chunks
+    results = {}
+    start_time = time_module.time()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_connections) as executor:
+        futures = []
+        for i in range(num_connections):
+            future = executor.submit(upload_worker, UPLOAD_TEST_URL, duration, chunk_size, results, i)
+            futures.append(future)
+
+        # Wait for all to complete
+        concurrent.futures.wait(futures)
+
+    elapsed = time_module.time() - start_time
+    total_bytes = sum(results.values())
+    speed_mbps = (total_bytes * 8) / (elapsed * 1_000_000) if elapsed > 0 else 0
+
+    print(f"Upload test: {total_bytes / (1024*1024):.2f} MB in {elapsed:.2f}s = {speed_mbps:.2f} Mbps")
     return speed_mbps
 
 def run_speedtest_thread():
@@ -246,32 +302,21 @@ def run_speedtest_thread():
         speedtest_status['progress'] = 'Initializing speedtest...'
         speedtest_status['error'] = None
 
-        # Test ping to various servers
+        # Test ping
         speedtest_status['progress'] = 'Testing ping latency...'
-        ping_results = []
-        for url in DOWNLOAD_TEST_URLS[:3]:
-            latency = test_ping(url)
-            if latency:
-                ping_results.append(latency)
+        latency = test_ping(DOWNLOAD_TEST_URLS[0])
+        if latency:
+            speedtest_status['ping'] = round(latency, 1)
+        speedtest_status['server'] = 'Public speedtest servers (Tele2, OVH)'
 
-        if ping_results:
-            speedtest_status['ping'] = round(min(ping_results), 1)
-            speedtest_status['server'] = 'Multiple CDN servers (Cloudflare, OVH, Tele2)'
+        # Download test - 30 seconds with 6 parallel connections
+        speedtest_status['progress'] = 'Testing download speed (30s, 6 connections)...'
+        download_speed = test_download_speed(DOWNLOAD_TEST_URLS[0], duration=30, num_connections=6)
+        speedtest_status['download'] = round(download_speed, 2)
 
-        # Download test - 30 seconds
-        speedtest_status['progress'] = 'Testing download speed (30s)...'
-        best_download = 0
-        for url in DOWNLOAD_TEST_URLS[:2]:  # Test with 2 different servers
-            try:
-                speed = test_download_speed(url, duration=30)
-                best_download = max(best_download, speed)
-                speedtest_status['download'] = round(best_download, 2)
-            except Exception as e:
-                print(f"Download test failed for {url}: {e}")
-
-        # Upload test - 30 seconds
-        speedtest_status['progress'] = 'Testing upload speed (30s)...'
-        upload_speed = test_upload_speed(duration=30)
+        # Upload test - 30 seconds with 3 parallel connections
+        speedtest_status['progress'] = 'Testing upload speed (30s, 3 connections)...'
+        upload_speed = test_upload_speed(duration=30, num_connections=3)
         speedtest_status['upload'] = round(upload_speed, 2)
 
         speedtest_status['progress'] = 'Complete!'
